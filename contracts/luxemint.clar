@@ -121,3 +121,143 @@
     )
 )
 
+;; read only functions
+;;
+(define-read-only (get-last-token-id)
+    (ok (var-get last-token-id))
+)
+
+(define-read-only (get-token-uri (token-id uint))
+    (ok
+        (if (is-none (nft-get-owner? luxurynfts token-id))
+            none
+            (some (nft-uri token-id))
+        )
+    )
+)
+
+(define-read-only (name) 
+    (ok token-name)
+)
+
+(define-read-only (symbol) 
+    (ok token-symbol)
+)
+
+(define-read-only (get-transferrable) 
+    (ok (var-get transferrable))
+)
+
+(define-read-only (get-owner (token-id uint))
+    (ok (nft-get-owner? luxurynfts token-id))
+)
+
+(define-read-only (get-approval (token-id uint))
+    (ok (unwrap! (map-get? nft-approvals token-id) err-not-approval))
+)
+
+(define-read-only (get-signer-public-key)
+    (ok (var-get signer-public-key))
+)
+
+(define-read-only (get-cid (token-id uint))
+    (ok (map-get? nft-cids token-id))
+)
+
+(define-read-only (get-campaign-minted (cid uint))
+    (ok (get-minted cid))
+)
+
+(define-read-only (is-verify-id-minted (verify-id uint)) 
+    (ok (map-get? minted-verify-ids verify-id))
+)
+
+(define-read-only (get-contract-hash) 
+    (ok (contract-hash))
+)
+
+;; private functions
+;;
+
+(define-private (contract-hash) 
+    (unwrap-panic (to-consensus-buff? (as-contract tx-sender)))
+)
+
+(define-private (is-owner (token-id uint) (user principal))
+  (is-eq user (unwrap! (nft-get-owner? luxurynfts token-id) false))
+)
+
+(define-private (is-approval (token-id uint) (user principal))
+  (is-eq user (unwrap! (map-get? nft-approvals token-id) false))
+)
+
+(define-private (is-owner-or-approval (token-id uint) (user principal))
+    (if (is-owner token-id user) true
+        (if (is-approval token-id user) true false)
+    )
+)
+
+(define-private (clear-approval (token-id uint)) 
+    (map-delete nft-approvals token-id)
+)
+
+(define-private (get-minted (cid uint))
+    ;; if none, return 0
+    ;; else return value
+    (default-to u0 (map-get? campaign-minted cid))
+)
+
+(define-private (is-minted (verify-id uint))
+    ;; if exist, return true
+    (is-some (map-get? minted-verify-ids verify-id))
+)
+
+(define-private (under-cap (cid uint) (cap uint)) 
+    ;; if cap equals 0, no cap
+    (if (is-eq cap u0)
+        true
+        (< (get-minted cid) cap)
+    )
+)
+
+(define-private (valid-signature (cid uint) (verify-id uint) (cap uint) (owner principal) (signature (buff 65))) 
+    (let 
+        (
+            (msg-hash (hash-claim-msg cid verify-id cap owner))
+        )
+        (secp256k1-verify msg-hash signature (var-get signer-public-key))
+    )
+)
+
+(define-private (hash-claim-msg (cid uint) (verify-id uint) (cap uint) (owner principal)) 
+    ;; sha256(concat(sha256(chain-id), sha256(cid), sha256(verify-id), sha256(cap)))
+    (sha256
+        (concat 
+            (concat 
+                (concat 
+                    (concat 
+                        (concat 
+                            (sha256 chain-id)
+                            (contract-hash)
+                        )
+                        (sha256 cid) 
+                    )
+                    (sha256 verify-id)
+                )
+                (sha256 cap)
+            ) 
+            (unwrap-panic (to-consensus-buff? owner))
+        )
+    )
+)
+
+(define-private (nft-uri (token-id uint)) 
+    (concat
+        (concat
+            base-uri
+            (int-to-ascii token-id)
+        )
+        ".json"
+    )
+)
+
